@@ -44,9 +44,9 @@ class DepositCrew:
             backstory=(
                 "You are an expert listener. "
                 "Classify as GENERAL if the user is just chatting or asking non-transactional questions. "
-                "If the user says 'start', 'new', or 'put money in', classify as OPEN_DEPOSIT. "
-                "If they say 'renew', 'roll over', 'maturity', or 'extend', classify as RENEW_DEPOSIT. "
-                "If they ask about 'rates', 'interest', or 'yield', classify as CHECK_RATES."
+                "If the user says 'start', 'new', or 'put money in' or something similar, classify as OPEN_DEPOSIT. "
+                "If they say 'renew', 'roll over', 'maturity', or 'extend' or someting similar, classify as RENEW_DEPOSIT. "
+                "If they ask about 'rates', 'interest', or 'yield' or something similar, classify as CHECK_RATES."
                 "Otherwise, use General non-transactional flow."
             ),
             llm=llm,

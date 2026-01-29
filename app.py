@@ -129,13 +129,13 @@ with st.sidebar:
             )
 
 # 4. Main Chat Interface
-st.title("🏦 Omni-Channel Banking Assistant")
+st.title("Banking Assistant")
 st.markdown("I can help you **Open**, **Renew**, or check **Rates** naturally.")
 
 # Display current session info
 st.caption(f"Current Session: {st.session_state.chat_sessions[st.session_state.current_session_id]['created_at']}")
 
-# 5. Display Chat History
+
 chat_container = st.container()
 with chat_container:
     for message in st.session_state.history:
@@ -153,21 +153,20 @@ with st.form(key='chat_form', clear_on_submit=True):
     submit_button = st.form_submit_button("Send", type="primary", use_container_width=True)
 
 if submit_button and user_input and user_input.strip():
-    # Add user message to history
+    
     st.session_state.history.append({"role": "user", "content": user_input})
     
     with st.spinner("Processing..."):
         try:
             deposit_crew = DepositCrew()
             recent_history = st.session_state.history[-5:]
+
             result = deposit_crew.kickoff(user_input, recent_history)
 
             response_text = str(result).replace("TaskOutput:", "").strip()
-
             st.session_state.history.append({"role": "assistant", "content": response_text})
-
             st.session_state.chat_sessions[st.session_state.current_session_id]['history'] = st.session_state.history.copy()
-            
+
             st.rerun()
             
         except Exception as e:
