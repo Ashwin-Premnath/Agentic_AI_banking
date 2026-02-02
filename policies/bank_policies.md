@@ -33,3 +33,13 @@ A: No, our standard savings accounts have zero maintenance fees if a minimum bal
 
 **Q: How do I close my account?**
 A: Please contact our support team or visit a branch with your ID for account closure.
+
+## 6. About Global Digital Bank
+* **Who We Are:** Global Digital Bank is a premier AI-first financial institution dedicated to providing seamless, secure, and intelligent banking solutions worldwide.
+* **Mission:** To empower wealth creation through transparency and next-generation technology.
+
+## 7. Banking Holidays (2025)
+* **New Year's Day:** January 1
+* **Labor Day:** September 1
+* **Christmas Day:** December 25
+* *Note: Online banking operates 24/7.*

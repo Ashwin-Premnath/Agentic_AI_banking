@@ -1,13 +1,12 @@
 import os
+import datetime
+from datetime import datetime
 from dotenv import load_dotenv
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai.tools import BaseTool
-from crewai_tools import OCRTool, SerperDevTool, FileReadTool, DirectoryReadTool, FileWriterTool
+from crewai_tools import OCRTool, SerperDevTool, FileReadTool, DirectoryReadTool, FileWriterTool, DirectorySearchTool
 load_dotenv()
 
-# We use the 'openai/' prefix for reliability with Custom endpoints in LiteLLM (used by CrewAI)
-# However, for this POC, we'll keep the nvidia_nim prefix if it works, or fallback to openai/
-# Let's use openai/ to be safe against the 404s we saw earlier.
 standard_llm = LLM(
     model="openai/meta/llama-3.1-70b-instruct",
     api_key=os.getenv("NVIDIA_API_KEY"),
@@ -53,12 +52,14 @@ class NL2SQLTool(BaseTool):
 
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
+            print(f"--- EXECUTING SQL: {sql} ---")
             cursor.execute(sql)
             conn.commit()
             
             # Check if it was a SELECT query or a modification query
             if cursor.description:
                 rows = cursor.fetchall()
+                print(f"--- SQL RESULT: Found {len(rows)} rows ---")
                 header = [description[0] for description in cursor.description]
                 conn.close()
                 if not rows: 
@@ -96,10 +97,10 @@ class BankingCrews:
                         "onboarding (new user registration), "
                         "account_query (financial balance, summary, transaction history, total wealth), "
                         "kyc_process (identity document verification), "
-                        "market_analysis (stock prices, external rates), "
-                        "interest_calc (savings/loan projections), "
+                        "market_analysis (stock prices, global market news), "
+                        "interest_calc (calculating specific returns on an amount, e.g. 'return on 10k'), "
                         "doc_mgmt (listing uploaded files), "
-                        "policy_query (bank terms and conditions), "
+                        "policy_query (bank terms, conditions, FD rates, holidays, 'about us', general FAQs), "
                         "fd_form (creating fixed deposits), "
                         "investment_track (buying or tracking assets), "
                         "spending_forecast (predicting future expenses), "
@@ -119,8 +120,37 @@ class BankingCrews:
             verbose=True
         )
         task = Task(
-            description="1. Vision analysis: Extract visible text from '{file_path}'. 2. Extraction: Name, ID, Expiry, Address. 3. Format as Markdown table.",
-            expected_output="A Markdown table containing Name, ID Number, Expiry, and Address.",
+            description="""
+            1. Vision analysis: Extract visible text from '{file_path}'. 
+            2. Extraction requirements:
+               - Document Type (e.g. Identity Card, PAN Card, Passport)
+               - Full Name
+               - Father's Name (if present)
+               - ID / PAN Number / Document ID
+               - Date of Birth / Expiry Date
+               - Registered Address
+               - Extraction Confidence Score
+            3. Present strictly using this format:
+
+            # Identity Verification Result
+            **Processing Status:** Successfully Extracted
+            
+            ### Document Details
+            | Field | Verified Data |
+            | :--- | :--- |
+            | Document Type | [Type] |
+            | Full Name | [Name] |
+            | Father's Name | [Father's Name] |
+            | ID / PAN Number | [ID] |
+            | Date of Birth | [DOB] |
+            | Expiry Date | [Expiry] |
+            | Registered Address | [Address] |
+            | Confidence Score | [Score] |
+
+            > [!NOTE]
+            > This data was extracted using high-precision OCR. Please verify the accuracy before proceeding with storage.
+            """,
+            expected_output="A professional Markdown report containing extracted KYC details in a table.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -134,8 +164,18 @@ class BankingCrews:
             verbose=True
         )
         task = Task(
-            description="Save the following JSON data: '{pending_data}' to the path: '{processed_path}'.",
-            expected_output="Confirmation of safe storage.",
+            description="""
+            1. Securely save the JSON data: '{pending_data}' to '{processed_path}'.
+            2. Ensure parent directories exist.
+            3. Confirm storage with a professional message:
+            
+            ### Data Security Confirmation
+            Your identity documents have been parsed, encrypted, and stored in your private vault at `{processed_path}`. 
+            
+            > [!IMPORTANT]
+            > Your record is now active in our verified customer database.
+            """,
+            expected_output="Confirmation of safe storage with a professional security note.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -156,33 +196,31 @@ class BankingCrews:
         )
         task = Task(
             description="""
-            1. Query the 'customers' table for the holder name and cash balance of {account_number}.
-            2. Query the 'investments' table to sum the 'current_value' for {account_number}.
-            3. Query the 'transactions' table for the 5 most recent activities related to {account_number}.
-            4. Present the COMPREHENSIVE results using EXCLUSIVELY this format:
+            1. **EXECUTE SQL**: Query table `customers` for 'balance' and 'name' WHERE account_number='{account_number}'.
+            2. **EXECUTE SQL**: Query table `investments` to SUM(current_value) WHERE account_number='{account_number}'. (Treat NULL as 0).
+            3. **EXECUTE SQL**: Query table `transactions` for last 5 records (timestamp, transaction_type, amount) WHERE account_number='{account_number}' ORDER BY timestamp DESC.
+            4. **FORMAT**: Populate the table below using ONLY the fetched data.
 
-            ### Comprehensive Account Overview
-            | Field | Value |
+            # Account Status/Overview Report
+            **Customer Name:** [Name from DB]
+            **Account Number:** {account_number}
+            
+            ### Financial Overview
+            | Category | Amount |
             | :--- | :--- |
-            | Account Holder | **[Name]** |
-            | Account Number | {account_number} |
-            | Cash Balance | **$[Balance]** |
-            | Total Investment Value | **$[Sum]** |
+            | **Liquid Cash Balance** | **[Balance from customers]** |
+            | **Investment Portfolio** | **[Sum from investments]** |
+            | **Total Net Worth** | **[Balance + Investments]** |
 
-            ### Last Transaction Details
-            [Table with ID, Type, Amount, Date of the single most recent transaction]
+            ### Recent Activity
+            | Date | Transaction Details | Amount |
+            | :--- | :--- | :--- |
+            [Iterate transaction rows: "| [Timestamp] | [Type] | **$[Amount]** |"]
 
-            ### Recent History
-            | ID | Beneficiary | Type | Mode | Amount | Date |
-            | :--- | :--- | :--- | :--- | :--- | :--- |
-            [List last 5 transactions here. If none, write "| N/A | N/A | N/A | N/A | **$0.00** | N/A |"]
-
-            > [!NOTE]
-            > This report aggregates data from your profile, transaction logs, and investment portfolio.
-
-            CRITICAL: Do not skip any sections. Always show the Account Holder name.
-""",
-            expected_output="A comprehensive Markdown report aggregating data from all relevant database tables.",
+            > [!TIP]
+            > For a detailed investment breakdown, ask "Show my portfolio".
+            """,
+            expected_output="A premium Markdown report aggregating strictly verified database data.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -198,8 +236,25 @@ class BankingCrews:
             verbose=True
         )
         task = Task(
-            description=f"Process info: '{{query}}'. Suggest Account: {random_acc}. Ask for missing details or confirm summary.",
-            expected_output="Request for missing data or a summary table with a confirmation question.",
+            description=f"""
+            Process info: '{{query}}'. 
+            1. Suggest Account: {random_acc}. 
+            2. Present strictly using this format:
+
+            # New Account Registration
+            Welcome to the future of banking. We have prepared your onboarding profile.
+
+            ### User Proposed Profile Summary
+            | Requirement | Status / Value |
+            | :--- | :--- |
+            | Full Name | [Name] |
+            | Primary Email | [Email] |
+            | Suggested Account | **{random_acc}** |
+
+            > [!IMPORTANT]
+            > To finalize your registration, please confirm the details above by replying with **'Correct'**.
+            """,
+            expected_output="A professional onboarding summary table with a clear call to action.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -215,8 +270,18 @@ class BankingCrews:
             verbose=True
         )
         task = Task(
-            description="INSERT the following verified data: '{verified_data}' into 'customers' table.",
-            expected_output="Professional success confirmation.",
+            description="""
+            1. INSERT verified data: '{verified_data}' into 'customers'.
+            2. Report status strictly using this format:
+
+            # Registration Complete
+            **Status:** Account Successfully Created
+            
+            ### Next Steps
+            > [!TIP]
+            > Your new account number is now active. You can fund it via the 'Deposit' feature or ask "What is my account status?".
+            """,
+            expected_output="Professional success confirmation with next steps.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -231,8 +296,23 @@ class BankingCrews:
             verbose=True
         )
         task = Task(
-            description="Search for market rates. Compare with query: '{query}'.",
-            expected_output="Formatted Markdown report with market insights.",
+            description="""
+            1. Search for market rates. 
+            2. Compare with user query: '{query}'.
+            3. Present strictly using this format:
+
+            # Global Market Insights
+            **Analysis Type:** Rate Comparison & Trend Forecast
+
+            ### Competitive Rate Analysis
+            | Institution | Product Type | Current Annual Rate | Notable Features |
+            | :--- | :--- | :--- | :--- |
+            [Rows]
+
+            > [!TIP]
+            > Based on current trends, [Market Insight]. Consider [Suggestion].
+            """,
+            expected_output="A data-driven Markdown report with market insights and institutional comparisons.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -252,16 +332,21 @@ class BankingCrews:
             description="""
             1. Fetch ACTUAL balance for {account_number}. 
             2. Calculate forecast based on '{query}'. 
-            3. Present EXCLUSIVELY using this format:
+            3. Present strictly using this format:
 
-            ### Interest Calculation Forecast
-            | Period | Current Balance | Projected Interest | Total Forecast |
+            # Interest Accumulation Forecast
+            **Projection Method:** Compound Interest Modeling
+            **Reference Balance:** $[Balance]
+
+            ### Future Value Projections
+            | Forecast Period | Principal Amount | Cumulative Interest | Total Projected Balance |
             | :--- | :--- | :--- | :--- |
             [Rows]
             
             > [!TIP]
-            > [Insights based on real data]""",
-            expected_output="Markdown response with a structured forecast table.",
+            > **Maximization Strategy:** [Brief tip on how to optimize these earnings.]
+            """,
+            expected_output="A structured financial forecast report with a projection table.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -281,28 +366,74 @@ class BankingCrews:
             allow_delegation=False
         )
         task = Task(
-            description="""1. Use the DirectoryReadTool to check the contents of: {uploads_dir}.
-            2. If the tool returns an empty list or 'No files found', respond that no documents are uploaded.
-            3. If files exist, list them in a Markdown table with their names.
-            4. DO NOT imagine any content or files that are not returned by the tool.""",
-            expected_output="A Markdown table of ACTUAL documents found, or a clear message stating the folder is empty.",
+            description="""
+            1. Use DirectoryReadTool to check: {uploads_dir}.
+            2. Present strictly using this format:
+
+            # Digital Document Repository
+            **Vault Access:** Authorized for Account {account_number}
+
+            ### On-File Documents
+            | Document Filename | Storage Status | Format |
+            | :--- | :--- | :--- |
+            [List files. If empty, write "| No documents on file | N/A | N/A |"]
+
+            > [!NOTE]
+            > All documents are securely stored and encrypted in your personal banking directory.
+            """,
+            expected_output="A clean document list table or a professional empty-state message.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
 
     def policy_crew(self):
-        file_tool = FileReadTool(file_path="policies/bank_policies.md", encoding='utf-8')
+        # RAG Tool for semantic search across the entire 'policies' directory
+        # Using DirectorySearchTool to index ALL files (pdfs, md, txt) in the folder
+        rag_tool = DirectorySearchTool(
+            directory='policies',
+            config=dict(
+                llm=dict(
+                    provider="openai",
+                    config=dict(
+                        model="openai/meta/llama-3.1-70b-instruct",
+                        base_url="https://integrate.api.nvidia.com/v1",
+                        api_key=os.getenv("NVIDIA_API_KEY")
+                    )
+                ),
+                embedder=dict(
+                    provider="openai",
+                    config=dict(
+                        model="nvidia/llama-3.2-nemoretriever-1b-vlm-embed-v1",
+                        api_base="https://integrate.api.nvidia.com/v1",
+                        api_key=os.getenv("NVIDIA_API_KEY")
+                    )
+                )
+            )
+        )
+        
         agent = Agent(
             role="Bank Policy Specialist",
-            backstory="Expert on internal bank regulations, fees, and procedures.",
-            goal="Provide accurate information about bank policies and FAQs.",
+            backstory="Expert on internal bank regulations. I use semantic search to find exact policy details.",
+            goal="Provide accurate information about bank policies using RAG.",
             llm=standard_llm,
-            tools=[file_tool],
+            tools=[rag_tool],
             verbose=True
         )
         task = Task(
-            description="Answer: '{query}' using the policy document.",
-            expected_output="Accurate policy answer in Markdown.",
+            description="""
+            1. Search policy document for: '{query}'.
+            2. Present answer strictly using this format:
+            
+            # Bank Policy Insight
+            **Topic:** {query}
+            
+            ### Policy Details
+            [Provide a clear, concise answer based on the retrieved text.]
+            
+            > [!NOTE]
+            > Policies are subject to change. Reference Doc: Global Terms & Conditions v3.
+            """,
+            expected_output="Accurate policy answer in structured Markdown.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
@@ -329,8 +460,23 @@ class BankingCrews:
             agent=ocr_agent
         )
         analysis_task = Task(
-            description="Analyze OCR for {user_context} and {accumulated_data}. check for missing markers '*'.",
-            expected_output="Questions or Preview.",
+            description="""
+            1. Analyze OCR results for {user_context} and {accumulated_data}.
+            2. Check for missing markers '*'.
+            3. Present strictly using this format:
+
+            # Fixed Deposit Application Preview
+            **Status:** [Pending Info / Ready for Review]
+
+            ### Extracted Details
+            | Field | Extracted Value | Status |
+            | :--- | :--- | :--- |
+            [List key fields: Name, Amount, Tenure, Nominee]
+
+            > [!IMPORTANT]
+            > Please review the details above. If anything is missing, please re-upload or provide the details in chat.
+            """,
+            expected_output="A structured preview table for the FD application.",
             agent=analyst_agent,
             context=[ocr_task]
         )
@@ -340,7 +486,7 @@ class BankingCrews:
         sql_tool = get_sql_tool(self.db_path)
         tracker_agent = Agent(
             role="Investment Tracking Specialist",
-            backstory="Detailed-oriented financial records keeper. Expert at tracking asset performance and updating investment databases.",
+            backstory="Detailed-oriented financial records keeper. Expert at tracking asset performance and updating investment databases. I ALWAYS verify the current portfolio from the database.",
             goal="Accurately track and update investment details for {account_number}.",
             llm=standard_llm,
             tools=[sql_tool],
@@ -348,39 +494,67 @@ class BankingCrews:
         )
         forecaster_agent = Agent(
             role="Asset Growth Forecaster",
-            backstory="Financial analyst specialized in predicting investment trends and asset growth based on historical data.",
-            goal="Provide growth forecasts and insights for user's investments.",
+            backstory="Financial analyst specialized in predicting investment trends. I ONLY forecast assets that physically exist in the user's portfolio. I NEVER invent 'Asset1' or generic names.",
+            goal="Provide growth forecasts for the user's ACTUAL investments.",
             llm=standard_llm,
             tools=[serper_tool],
             verbose=True
         )
+        # Prepare date string safely outside the f-string for cleaner code
+        report_date = datetime.now().strftime("%Y-%m-%d")
+        
         tracking_task = Task(
-            description="""1. Fetch current balance for {account_number}.
-            2. Check if balance >= investment amount in '{query}'.
-            3. If yes, UPDATE balance and INSERT investment.
+            description=f"""
+            1. Fetch current balance for account '{{account_number}}' from 'customers' table.
+            2. If buying/investing in '{{query}}', check balance, INSERT into 'investments', UPDATE 'customers'.
+            3. CRITICAL: Execute 'SELECT * FROM investments WHERE account_number = "{{account_number}}"' to get assets.
             4. Report status using EXCLUSIVELY this format:
 
-            ### Investment Transaction Status
-            [Success/Failure Message]
+            # Investment Portfolio Report
+            **Account Number:** {{account_number}}
+            **Report Date:** {report_date}
+
+            ### Transaction Status
+            [Success/Failure Message or 'No recent transactions performed. Viewing current portfolio.']
             
-            ### Current Investment Portfolio
-            | Asset | Type | Invested | Current Value |
-            | :--- | :--- | :--- | :--- |
-            [Rows]""",
-            expected_output="Markdown summary of investment status and holdings.",
+            ### Current Portfolio Holdings
+            | Asset Name | Asset Type | Principal Invested | Current Market Value | Unrealized P/L |
+            | :--- | :--- | :--- | :--- | :--- |
+            [List each asset. Calculate P/L as Current Value - Invested]
+            
+            **Total Portfolio Value:** $[Sum of Current Values]
+            
+            > [!NOTE]
+            > If no records are found, explicitly state: "Our records indicate no active investment holdings."
+            """,
+            expected_output="A structured header and table showing the current investment portfolio from the database.",
             agent=tracker_agent
         )
         forecasting_task = Task(
-            description="""Based on the holdings, provide a forecast using EXCLUSIVELY this format:
+            description="""
+            1. Analyze the 'Current Portfolio Holdings' from the previous task.
+            2. If no holdings exist, output 'No active assets identified for forecasting.' and STOP.
+            3. For each asset name found:
+               a. Perform a deep search for current market price, recent 7-day performance, and analyst price targets for 2024-2025.
+            4. Append the following section to the previous report:
+
+            ---
+            ### Market Outlook & Performance Forecast
+            | Asset | Current Sentiment | Projected 12M Growth | Confidence Level |
+            | :--- | :--- | :--- | :--- |
+            [Rows for each asset]
             
-            ### Investment Growth Forecast
-            | Asset | Predicted Growth | Confidence |
-            | :--- | :--- | :--- |
-            [Rows]
-            
+            ### Strategic Insights
             > [!IMPORTANT]
-            > [Market sentiment notes]""",
-            expected_output="Markdown report with growth projections.",
+            > **Market Update:** [Provide a concise 2-3 sentence summary of global market conditions affecting these specific assets.]
+            
+            > [!TIP]
+            > **Diversification Note:** [A brief professional tip based on the user's current holdings.]
+
+            ---
+            *Disclaimer: These projections are based on real-time market data and AI analysis. Always consult with a certified financial advisor before making investment decisions.*
+            """,
+            expected_output="A professional market outlook and forecast section appended to the portfolio report.",
             agent=forecaster_agent,
             context=[tracking_task]
         )
@@ -404,28 +578,38 @@ class BankingCrews:
             verbose=True
         )
         analysis_task = Task(
-            description="""1. Fetch transactions for {account_number}. 
-            2. Categorize spending into groups and present using EXCLUSIVELY this format:
+            description="""
+            1. Fetch transactions for {account_number}. 
+            2. Present strictly using this format:
 
-            ### Spending Analysis Breakdown
-            | Category | Amount | Percentage |
+            # Personal Spending Analysis
+            **Reporting Period:** Fiscal Month to Date
+
+            ### Expenditure Breakdown
+            | Spending Category | Total Amount | % of Outflow |
             | :--- | :--- | :--- |
-            [Rows]""",
-            expected_output="Categorized breakdown of spending in Markdown.",
+            [Rows]
+
+            > [!NOTE]
+            > Analysis based on verified transaction history logs.
+            """,
+            expected_output="Categorized breakdown of spending in a professional Markdown report.",
             agent=analyzer_agent
         )
         prediction_task = Task(
-            description="""Project expenses for next month using EXCLUSIVELY this format:
+            description="""
+            Project next month's spending strictly using this format:
             
-            ### Next Month Spending Projection
-            | Metric | Forecasted Value |
-            | :--- | :--- |
-            | Projected Total | [Value] |
-            | Major Category | [Category] |
+            ### Future Outflow Projection
+            | Anticipated Metric | Forecasted Value | Confidence Level |
+            | :--- | :--- | :--- |
+            | Total Projected Spend | **$[Value]** | [High/Mid] |
+            | Primary Cost Driver | [Category] | Verified Trend |
             
             > [!TIP]
-            > [Budgeting tips]""",
-            expected_output="Markdown forecast of spending.",
+            > **Budget Optimization:** [Strategic budgeting tip based on historical patterns.]
+            """,
+            expected_output="A clean expenditure forecast appended to the spending report.",
             agent=predictor_agent,
             context=[analysis_task]
         )
@@ -446,31 +630,25 @@ class BankingCrews:
         )
         task = Task(
             description="""
-            1. Parse the user's request: '{query}'.
-            2. If it is a query for current profile details (e.g., "What is my name?"):
-                a. FETCH and DISPLAY the current record.
-            3. If it is an update request (e.g., "Change my email"):
-                a. Check if the NEW value is provided in the query.
-                b. If NO new value is found: 
-                   - Inform the user clearly what is missing (e.g., "Please provide the new email address").
-                   - Still display the CURRENT profile in the table below.
-                c. If a new value IS found:
-                   - UPDATE the database.
-                   - FETCH the updated record.
-            4. Present the result using EXCLUSIVELY this format:
+            1. Parse request: '{query}'.
+            2. If querying details: Fetch and display from DB.
+            3. If updating: Check for value, Update DB, Fetch updated.
+            4. Present results strictly following this Markdown structure (preserve newlines):
 
-            ### User Profile Management
-            | Field | Value | Status |
+            # Customer Profile Management
+            **Verification Status:** Identity Authenticated
+
+            ### Current Profile Information
+            | Personal Field | Current Value | Update Status |
             | :--- | :--- | :--- |
-            | Account Holder | **[Name]** | [Current / Updated / Awaiting Info] |
-            | Email Address | [Email] | [Current / Updated / Awaiting Info] |
-            | Account Number | {account_number} | Verified |
+            | Account Holder | **[Name]** | [Status] |
+            | Email Address | [Email] | [Status] |
+            | Account Reference | **{account_number}** | Verified |
 
-            > [!NOTE]
-            > Account data sync is performed in real-time with our core banking systems.
-
-            DO NOT output raw SQL. If information is missing for an update, ask for it politely but keep the table.""",
-            expected_output="A structured Markdown profile view, with updates applied or missing info requested.",
+            > [!IMPORTANT]
+            > **Data Sync:** Profile changes are synchronized across all global systems in real-time.
+            """,
+            expected_output="A professional profile management table showing current or updated user data.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)

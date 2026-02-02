@@ -16,28 +16,17 @@ def convert_datetime(val):
     """Convert ISO 8601 string to datetime.datetime object."""
     return datetime.fromisoformat(val.decode() if isinstance(val, bytes) else val)
 
-# 1. Register the adapter: Handles Saving (Python Object -> SQL String)
 sqlite3.register_adapter(datetime, adapt_datetime_iso)
-
-# 2. Register the converter: Handles Reading (SQL String -> Python Object)
 sqlite3.register_converter("TIMESTAMP", convert_datetime)
 
-# ==========================================================
-
 def initialize_database():
-    """
-    Connects to the database, creates tables.
-    Uses detect_types to ensure the converter works if we read data back.
-    """
-    # detect_types=sqlite3.PARSE_DECLTYPES is crucial for the converter
+
     conn = sqlite3.connect(DB_NAME, detect_types=sqlite3.PARSE_DECLTYPES)
     cursor = conn.cursor()
-
-    # Drop tables to ensure clean schema with updated columns
     cursor.execute('DROP TABLE IF EXISTS transactions')
     cursor.execute('DROP TABLE IF EXISTS customers')
+    cursor.execute('DROP TABLE IF EXISTS investments')
 
-    # 1. Create Customers Table
     cursor.execute('''
         CREATE TABLE customers (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +38,6 @@ def initialize_database():
         )
     ''')
 
-    # 2. Create Transactions Table
     cursor.execute('''
         CREATE TABLE transactions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,19 +51,37 @@ def initialize_database():
         )
     ''')
 
+    # 3. Create Investments Table
+    cursor.execute('''
+        CREATE TABLE investments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_number TEXT NOT NULL,
+            asset_name TEXT NOT NULL,
+            asset_type TEXT NOT NULL,
+            invested_amount REAL NOT NULL,
+            current_value REAL NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (account_number) REFERENCES customers (account_number)
+        )
+    ''')
+
     conn.commit()
     conn.close()
     print(f"[*] Database '{DB_NAME}' initialized successfully.")
 
 def generate_fake_customers(num_customers=100):
-    """
-    Generates fake customer data.
-    """
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
 
     print(f"[*] Generating {num_customers} fake customers...")
     
+    # Ensure our test user exists
+    test_acc = '6204938206'
+    cursor.execute('''
+        INSERT INTO customers (name, email, account_number, balance)
+        VALUES (?, ?, ?, ?)
+    ''', ('Test User', 'test@example.com', test_acc, 25000.00))
+
     for _ in range(num_customers):
         name = fake.name()
         email = fake.email()
@@ -93,6 +99,32 @@ def generate_fake_customers(num_customers=100):
     conn.commit()
     conn.close()
     print("[*] Customer generation complete.")
+
+def generate_dummy_investments():
+    """Generates dummy investments for testing."""
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    print("[*] Generating dummy investments...")
+
+    # For our test user
+    test_acc = '6204938206'
+    
+    investments = [
+        (test_acc, 'Apple Inc.', 'Stock', 5000.0, 5800.0),
+        (test_acc, 'Tesla Corp', 'Stock', 3000.0, 3200.0),
+        (test_acc, 'Bitcoin', 'Crypto', 1000.0, 1500.0),
+        (test_acc, 'Vanguard S&P 500', 'ETF', 2000.0, 2100.0)
+    ]
+
+    for inv in investments:
+        cursor.execute('''
+            INSERT INTO investments (account_number, asset_name, asset_type, invested_amount, current_value)
+            VALUES (?, ?, ?, ?, ?)
+        ''', inv)
+
+    conn.commit()
+    conn.close()
+    print("[*] Investments generated.")
 
 def get_random_account(cursor):
     """Helper to fetch a random account."""
@@ -223,4 +255,5 @@ def simulate_realtime_transactions():
 if __name__ == "__main__":
     initialize_database()
     generate_fake_customers(num_customers=50)
+    generate_dummy_investments()
     simulate_realtime_transactions()
