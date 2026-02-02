@@ -1,0 +1,7 @@
+crewai
+crewai-tools
+pydantic
+python-dotenv
+streamlit
+serper-google-search-tool
+sqlalchemy
