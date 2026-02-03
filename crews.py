@@ -4,22 +4,22 @@ from datetime import datetime
 from dotenv import load_dotenv
 from crewai import Agent, Crew, Process, Task, LLM
 from crewai.tools import BaseTool
-from crewai_tools import OCRTool, SerperDevTool, FileReadTool, DirectoryReadTool, FileWriterTool, DirectorySearchTool
+from pydantic import Field
+from crewai_tools import SerperDevTool, FileReadTool, DirectoryReadTool, FileWriterTool, DirectorySearchTool
+
 load_dotenv()
 
 standard_llm = LLM(
     model="openai/meta/llama-3.1-70b-instruct",
     api_key=os.getenv("NVIDIA_API_KEY"),
     base_url="https://integrate.api.nvidia.com/v1",
-    temperature=0.0
-)
+    temperature=0.0)
 
 vision_llm = LLM(
-    model="openai/nvidia/nemotron-nano-12b-v2-vl",
+    model="nvidia/nvidia/nemotron-nano-12b-v2-vl",
     api_key=os.getenv("NVIDIA_API_KEY"),
     base_url="https://integrate.api.nvidia.com/v1",
-    temperature=0.0
-)
+    temperature=0.0)
 
 serper_tool = SerperDevTool()
 
@@ -33,7 +33,8 @@ interest_policy_tool = FileReadTool(
     name="Interest Policy Reader",
     description="Reads the content of the interest rate file and returns it as a string.",
     file_path="policies\\interest_rate.txt"
-)   
+)
+
 class NL2SQLTool(BaseTool):
     """Enhanced SQL tool with better error handling and query validation"""
     name: str = "NL2SQL Database Tool"
@@ -58,9 +59,7 @@ class NL2SQLTool(BaseTool):
         import sqlite3
         import os
         import json
-        
         try:
-            # Clean the SQL query
             sql = query.strip()
             sql = sql.replace("```sql", "").replace("```", "").replace("`", "").strip()
             
@@ -69,21 +68,18 @@ class NL2SQLTool(BaseTool):
                     "error": f"Database file '{self.db_path}' not found in current directory.",
                     "success": False
                 })
-
             conn = sqlite3.connect(self.db_path)
-            conn.row_factory = sqlite3.Row  # Enable column access by name
+            conn.row_factory = sqlite3.Row  
             cursor = conn.cursor()
             
             print(f"--- EXECUTING SQL: {sql} ---")
             cursor.execute(sql)
             conn.commit()
-            
-            # Check if it was a SELECT query or a modification query
+
             if cursor.description:
                 rows = cursor.fetchall()
                 print(f"--- SQL RESULT: Found {len(rows)} rows ---")
                 
-                # Convert to list of dictionaries
                 results = [dict(row) for row in rows]
                 conn.close()
                 
@@ -100,7 +96,6 @@ class NL2SQLTool(BaseTool):
                     "success": True
                 })
             else:
-                # It was an UPDATE, INSERT, or DELETE
                 affected = cursor.rowcount
                 conn.close()
                 return json.dumps({
@@ -120,7 +115,6 @@ class NL2SQLTool(BaseTool):
                 "success": False
             })
 
-
 class DatabaseSchemaInfoTool(BaseTool):
     """Tool to get database schema information"""
     name: str = "Database Schema Info"
@@ -139,7 +133,6 @@ class DatabaseSchemaInfoTool(BaseTool):
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
-            # Get table info
             cursor.execute(f"PRAGMA table_info({table_name})")
             columns = cursor.fetchall()
             
@@ -173,7 +166,6 @@ class DatabaseSchemaInfoTool(BaseTool):
                 "success": False
             })
 
-
 class QueryGeneratorTool(BaseTool):
     """Tool to help generate SQL queries from natural language"""
     name: str = "SQL Query Generator"
@@ -204,7 +196,6 @@ class QueryGeneratorTool(BaseTool):
             "insert investment": "INSERT INTO investments (account_number, asset_name, asset_type, invested_amount, current_value, timestamp) VALUES ('{account_number}', '{asset_name}', '{asset_type}', {invested_amount}, {current_value}, datetime('now'))"
         }
         
-        # Find matching template
         matched_template = None
         for key, template in templates.items():
             if key in description_lower:
@@ -229,16 +220,13 @@ def get_sql_tool(db_path="bank_system_v3.db"):
     """Get the main SQL execution tool"""
     return NL2SQLTool(db_path=db_path)
 
-
 def get_schema_tool(db_path="bank_system_v3.db"):
     """Get the schema information tool"""
     return DatabaseSchemaInfoTool(db_path=db_path)
 
-
 def get_query_generator_tool():
     """Get the query generator helper tool"""
     return QueryGeneratorTool()
-
 
 class BankingCrews:
     def __init__(self, account_number=None):
@@ -247,7 +235,6 @@ class BankingCrews:
         self.user_dir = f"user_data/{account_number}" if account_number else "user_data"
         self.uploads_dir = f"{self.user_dir}/uploads"
         
-        # Initialize all database tools
         self.sql_tool = get_sql_tool(self.db_path)
         self.schema_tool = get_schema_tool(self.db_path)
         self.query_gen_tool = get_query_generator_tool()
@@ -283,23 +270,27 @@ class BankingCrews:
     def kyc_extraction_crew(self):
         agent = Agent(
             role="KYC Data Extractor",
-            backstory="Senior banking auditor specializing in vision-based document transcription and verification.",
-            goal="Extract and transcribe identity information from images/PDFs with high precision.",
-            llm=vision_llm,
+            backstory=(
+                "Senior banking auditor. You receive raw OCR data from an image. "
+                "Your job is to intelligently parse this text to find specific details."
+            ),
+            goal="Parse raw OCR text to extract identity information.",
+            llm=vision_llm, 
             verbose=True
         )
+        
         task = Task(
             description="""
-            1. Vision analysis: Extract visible text from '{file_path}'. 
-            2. Extraction requirements:
-               - Document Type (e.g. Identity Card, PAN Card, Passport)
+            1. Retrieve Raw Data: Use the Baidu PaddleOCR Tool on the file: '{file_path}'. 
+               NOTE: The tool will return a JSON response containing all text found in the image.
+            
+            2. Analyze & Extract: Parse the JSON/text to find the following fields:
+               - Document Type
                - Full Name
-               - Father's Name (if present)
-               - ID / PAN Number / Document ID
-               - Date of Birth / Expiry Date
-               - Registered Address
-               - Extraction Confidence Score
-            3. Present strictly using this format:
+               - ID / PAN Number
+               - Date of Birth
+            
+            3. Output Format: Present the findings using the table below.
 
             # Identity Verification Result
             **Processing Status:** Successfully Extracted
@@ -309,21 +300,14 @@ class BankingCrews:
             | :--- | :--- |
             | Document Type | [Type] |
             | Full Name | [Name] |
-            | Father's Name | [Father's Name] |
-            | ID / PAN Number | [ID] |
+            | ID Number | [ID] |
             | Date of Birth | [DOB] |
-            | Expiry Date | [Expiry] |
-            | Registered Address | [Address] |
-            | Confidence Score | [Score] |
-
-            > [!NOTE]
-            > This data was extracted using high-precision OCR. Please verify the accuracy before proceeding with storage.
             """,
-            expected_output="A professional Markdown report containing extracted KYC details in a table.",
+            expected_output="A professional Markdown report containing extracted KYC details.",
             agent=agent
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
-
+    
     def kyc_storage_crew(self):
         agent = Agent(
             role="Data Security Officer",
@@ -372,7 +356,6 @@ class BankingCrews:
         return Crew(agents=[agent], tasks=[task], verbose=True)
 
     def onboarding_storage_crew(self):
-        """Enhanced onboarding storage with database integration"""
         agent = Agent(
             role="Account Registration Database Manager",
             backstory="Database specialist who creates new customer accounts in the banking system with precision and security.",
@@ -416,10 +399,6 @@ class BankingCrews:
         return Crew(agents=[agent], tasks=[task], verbose=True)
 
     def account_crew(self):
-        """
-        Robust Account Crew designed to prevent hallucinations and handle empty data states.
-        Follows strict Streamlit Markdown table standards.
-        """
         agent = Agent(
             role="Senior Account Information Specialist",
             backstory=(
@@ -509,8 +488,7 @@ class BankingCrews:
         )
         return Crew(agents=[agent], tasks=[task], verbose=True)
 
-    def interest_calculator_crew(self):
-        """Enhanced interest calculator with database integration"""
+    def interest_return_calculator_crew(self):
         agent = Agent(
             role="Financial Returns Calculator",
             backstory="""Expert at calculating returns, interest, and growth projections. 
@@ -586,7 +564,6 @@ class BankingCrews:
             tools=[policy_reader],
             verbose=True
         )
-
         task = Task(
             description=f"""
             User Query: '{{query}}' | Account: {{account_number}}
@@ -639,7 +616,6 @@ class BankingCrews:
             tools=[policy_reader],
             verbose=True
         )
-
         task = Task(
             description="""
             Policy Query: '{query}'
@@ -718,15 +694,14 @@ class BankingCrews:
         forecaster_agent = Agent(
             role="Asset Growth Forecaster",
             backstory="""Financial analyst who enriches real portfolio data with market trends.
-            You ONLY forecast for assets that actually exist in the database.""",
+            CRITICAL: you always use tool provided to you to fetch the current market trends from the internet and caompare with the stocks in the database to provide comphrensive data.
+            You ONLY forecast for assets that actually exist in the database and use that assets and search the internet using the tool provided.""",
             goal="Provide growth forecasts for actual investments.",
             llm=standard_llm,
             tools=[serper_tool],
             verbose=True
         )
-        
-        report_date = datetime.now().strftime("%Y-%m-%d")
-        
+
         tracking_task = Task(
             description=f"""
             Query: '{{query}}' | Account: {{account_number}}
@@ -790,7 +765,6 @@ class BankingCrews:
         return Crew(agents=[tracker_agent, forecaster_agent], tasks=[tracking_task, forecasting_task], verbose=True)
 
     def spending_forecast_crew(self):
-        """Enhanced spending analysis with detailed breakdowns and confidence scoring"""
         analyzer_agent = Agent(
             role="Spending Pattern Analyst",
             backstory="""Transaction data specialist who analyzes spending patterns using database queries.
@@ -801,7 +775,6 @@ class BankingCrews:
             tools=[self.sql_tool, self.schema_tool],
             verbose=True
         )
-        
         predictor_agent = Agent(
             role="Expense Predictor",
             backstory="Financial forecasting specialist who predicts future spending based on historical patterns and calculates confidence scores.",
@@ -809,10 +782,7 @@ class BankingCrews:
             llm=standard_llm,
             verbose=True
         )
-        
-        # ==========================================
-        # Task 1: Historical Analysis
-        # ==========================================
+
         analysis_task = Task(
             description=f"""
             Account: {{account_number}}
@@ -855,7 +825,7 @@ class BankingCrews:
             expected_output="Detailed analysis table with Total, Count, Average, and Percentage.",
             agent=analyzer_agent
         )
-        
+
         prediction_task = Task(
             description="""
             Based on the spending analysis from the previous task:
@@ -895,8 +865,9 @@ class BankingCrews:
         )
         
         return Crew(agents=[analyzer_agent, predictor_agent], tasks=[analysis_task, prediction_task], verbose=True)
+    
     def account_management_crew(self):
-        """Enhanced account management with database updates"""
+
         agent = Agent(
             role="Account Profile Administrator",
             backstory="""Senior database administrator with authority to update customer profiles.
