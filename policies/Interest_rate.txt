@@ -1,0 +1,24 @@
+Term Deposit Rate Structure (Generic)
+This structure represents how the bank break down rates by tenure. 
+
+7 days to 29 days: 3.00%
+30 days to 45 days: 3.25%
+46 days to 90 days: 4.25%
+91 days to 180 days: 4.50%
+181 days to 270 days: 5.50%
+1 Year: 6.25%
+15 Months: 6.60%
+3 Years: 6.75%
+5 Years to 10 Years: 6.40% 
+
+Important Notes on Deposits
+
+Senior Citizens: Generally receive an additional 0.50% to 0.75% p.a. over the normal rate.
+
+Compounding: Interest is mostly compounded quarterly.
+
+Premature Withdrawal: Usually penalized by a 0.50% to 1% reduction in the interest rate.
+
+Deposit Insurance: FDs with banks are insured up to ₹5 Lakh per depositor by DICGC.
+
+Special Deposit: Some banks offer higher rates for specific tenures (e.g., 450 days or 999 days). 

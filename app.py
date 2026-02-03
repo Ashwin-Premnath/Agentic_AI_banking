@@ -3,22 +3,9 @@ import os
 import tempfile
 from main import BankingFlow, BankingState
 
-st.set_page_config(page_title="Banking AI Assistant", page_icon="🏦", layout="wide")
+st.set_page_config(page_title="Banking AI Assistant", layout="wide")
 
-# Custom CSS for compact, professional UI
-st.markdown("""
-    <style>
-        .block-container { padding-top: 1rem; padding-bottom: 0rem; padding-left: 2rem; padding-right: 2rem; }
-        h1 { margin-top: -3rem; padding-bottom: 0px; font-size: 1.8rem !important; }
-        h2 { padding-top: 0.5rem; padding-bottom: 0.2rem; font-size: 1.5rem !important; }
-        h3 { padding-top: 0.5rem; padding-bottom: 0.2rem; font-size: 1.2rem !important; }
-        .stChatMessage { padding: 0.5rem; }
-        .stMarkdown p { margin-bottom: 0.5rem; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown("## 🏦 Banking AI Assistant")
-st.caption("Powered by CrewAI Flows & NVIDIA NIM")
+st.markdown("Banking AI Assistant")
 
 # Sidebar for User Context
 with st.sidebar:
