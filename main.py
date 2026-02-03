@@ -6,48 +6,32 @@ from dotenv import load_dotenv
 from crewai.flow.flow import Flow, start, listen, router, or_
 from pydantic import BaseModel
 from typing import Optional
-
-# Import the enhanced crews
 from crews import BankingCrews
 
 load_dotenv()
 
-
 class BankingState(BaseModel):
-    """Enhanced state model with database tracking"""
     account_number: str = "GUEST"
     query: str = ""
     file_path: Optional[str] = None
     intent: str = ""
     response: str = ""
     user_dir: str = ""
-    
-    # KYC workflow state
     pending_kyc_data: Optional[str] = None
     awaiting_confirmation: bool = False
-    
-    # Onboarding workflow state
     pending_onboarding_data: Optional[str] = None
     onboarding_awaiting_confirmation: bool = False
-    
-    # FD workflow state
     pending_fd_data: Optional[str] = None
-    
-    # Database interaction tracking
     last_sql_query: Optional[str] = None
     last_db_result: Optional[str] = None
     db_operation_success: bool = False
 
 
 class BankingFlow(Flow[BankingState]):
-    """Enhanced Banking Flow with comprehensive database integration"""
 
     @start()
     def initialize_session(self):
-        """Initialize user session and directory structure"""
         print(f" Initializing session for: {self.state.account_number}")
-        
-        # Setup user directory structure
         self.state.user_dir = f"user_data/{self.state.account_number}"
         directories = [
             f"{self.state.user_dir}/uploads",
@@ -60,8 +44,6 @@ class BankingFlow(Flow[BankingState]):
         
         for directory in directories:
             os.makedirs(directory, exist_ok=True)
-        
-        # Handle file upload move (if any)
         if self.state.file_path and os.path.exists(self.state.file_path):
             filename = os.path.basename(self.state.file_path)
             new_path = f"{self.state.user_dir}/uploads/{filename}"
@@ -69,7 +51,6 @@ class BankingFlow(Flow[BankingState]):
             self.state.file_path = new_path
             print(f" File moved to: {new_path}")
 
-        # Log query with timestamp
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         query_log = {
             "timestamp": timestamp,
@@ -77,36 +58,29 @@ class BankingFlow(Flow[BankingState]):
             "file": self.state.file_path,
             "account_number": self.state.account_number
         }
-        
+
         query_log_path = f"{self.state.user_dir}/queries/query_{timestamp}.json"
         with open(query_log_path, "w", encoding="utf-8") as f:
             json.dump(query_log, f, indent=2)
-        
         print(f" Query logged to: {query_log_path}")
 
     @listen(initialize_session)
     def determine_intent(self):
-        """Analyze query and determine routing intent"""
         print("\n Chief Manager analyzing query...")
         crews = BankingCrews(self.state.account_number)
-        
         result = crews.manager_crew().kickoff(inputs={
             "query": self.state.query,
             "account_number": self.state.account_number
         })
-        
-        # Clean and normalize the intent
         self.state.intent = str(result).strip().lower().replace(".", "").replace("#", "").split()[0]
         print(f" Manager Decision: Route to '{self.state.intent}' department")
 
     @router(determine_intent)
     def route_request(self):
-        """Route to appropriate handler based on intent"""
         return self.state.intent
 
     @listen("onboarding")
     def handle_onboarding(self):
-        """Handle new customer onboarding with data collection"""
         print("\n Processing Onboarding Request...")
         crews = BankingCrews(self.state.account_number)
         
@@ -130,7 +104,6 @@ class BankingFlow(Flow[BankingState]):
 
     @listen("onboarding_confirm")
     def handle_onboarding_confirmation(self):
-        """Confirm and store onboarding data in database"""
         print("\n Confirming Onboarding & Creating Database Record...")
         crews = BankingCrews(self.state.account_number)
         
@@ -260,7 +233,6 @@ class BankingFlow(Flow[BankingState]):
         result = crews.doc_management_crew().kickoff(inputs={
             "uploads_dir": f"{self.state.user_dir}/uploads"
         })
-        
         self.state.response = str(result)
         print(" Document listing completed")
 
